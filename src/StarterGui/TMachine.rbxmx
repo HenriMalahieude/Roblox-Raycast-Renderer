@@ -1,0 +1,197 @@
+<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">
+	<Meta name="ExplicitAutoJoints">true</Meta>
+	<External>null</External>
+	<External>nil</External>
+	<Item class="SurfaceGui" referent="RBX4D8E887B79C64099B791B36F98D589DE">
+		<Properties>
+			<bool name="Active">true</bool>
+			<Ref name="Adornee">RBXBD8E0AFAC88E417D8D1810B80A5C87D9</Ref>
+			<bool name="AlwaysOnTop">false</bool>
+			<BinaryString name="AttributesSerialize"></BinaryString>
+			<bool name="AutoLocalize">true</bool>
+			<Vector2 name="CanvasSize">
+				<X>800</X>
+				<Y>800</Y>
+			</Vector2>
+			<bool name="ClipsDescendants">true</bool>
+			<bool name="Enabled">true</bool>
+			<token name="Face">0</token>
+			<float name="LightInfluence">1</float>
+			<string name="Name">TMachine</string>
+			<float name="PixelsPerStud">50</float>
+			<bool name="ResetOnSpawn">true</bool>
+			<Ref name="RootLocalizationTable">null</Ref>
+			<token name="SizingMode">0</token>
+			<int64 name="SourceAssetId">-1</int64>
+			<BinaryString name="Tags"></BinaryString>
+			<float name="ToolPunchThroughDistance">0</float>
+			<token name="ZIndexBehavior">1</token>
+			<float name="ZOffset">0</float>
+		</Properties>
+		<Item class="LocalScript" referent="RBXB354109AC3F84516BB41DDC25747D18C">
+			<Properties>
+				<BinaryString name="AttributesSerialize"></BinaryString>
+				<bool name="Disabled">false</bool>
+				<Content name="LinkedSource"><null></null></Content>
+				<string name="Name">Renderer</string>
+				<string name="ScriptGuid">{DC3E3A24-3AF8-48D7-9A45-60BE0CB150C7}</string>
+				<ProtectedString name="Source"><![CDATA[local RunService = game:GetService("RunService")
+local Library = require(script.Parent.Parent:WaitForChild("Library")) --cuts down on other uses, isn't involved in rendering
+local ServerCommunication = game.ReplicatedStorage.Remotes.Textured
+
+local SurfaceScreen = script.Parent
+local PixelFolder = SurfaceScreen.Pixels --folder that contains the pixels
+
+local on = false
+local loading = false
+local grid = 50 --50x50, able to move the resolution higher compared to previous models because of optimization
+local fovM = 0.35 --The FOV, able to push higher due to optimization
+local maxDist = 6
+local pTab = {};
+
+local pixel = Instance.new("TextLabel")
+pixel.Text = "" --lmao
+pixel.Size = UDim2.new(0, (800/grid), 0, (800/grid)) --800 is the size of the surfaceGui, I should just reference it
+pixel.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
+pixel.BorderSizePixel = 0
+
+--What we shall use to render, the minimap
+local mach = workspace.TMachine
+local minMap = mach.MiniMap
+local user = minMap.User --this is the user's part on the machine
+
+local function generatePixels()
+	loading = true
+	coroutine.wrap(function()
+		for x=0, (grid-1) do
+			pTab[x] = {}
+			coroutine.wrap(function()
+				for y=0, (grid-1) do
+					local p = pixel:Clone()
+					p.Position = UDim2.new(0, x*(800/grid), 0, y*(800/grid))
+					p.Name = "Pixel("..x..","..y..")"
+					p.Parent = PixelFolder
+					pTab[x][y] = p
+					wait()
+				end
+			end)()
+			--wait()
+		end
+		repeat wait() until #PixelFolder:GetChildren() >= (grid*grid)
+		loading = false
+	end)()
+end
+
+local function clear() --creates the "sky box"
+	for i=0, (grid-1) do
+		local gridHalf = grid/2
+		for j=0, (grid-1) do
+			local pix = pTab[i][j]
+			if j > gridHalf then
+				pix.BackgroundColor3 = Color3.fromRGB(150, 100, 100)
+			else
+				pix.BackgroundColor3 = Color3.fromRGB(150, 150, 255)
+			end
+		end
+	end
+end
+
+local function areWeMoving()
+	local kys = Library.getKeys()
+	return kys["w"] or kys["a"] or kys["s"] or kys["d"]
+end
+
+--Hard-Coded Texture of Checkboard pattern for each pixel depending on "position"
+local function texture(obj, pos, norm, distance, pix, yLoc)
+	local m1 = 1 - math.clamp(distance/maxDist, 0.1, 1)
+	local dif = -1
+	if math.abs(norm.X) == 1 then
+		dif = obj.Position.Y - pos.Y
+	elseif math.abs(norm.Y) == 1 then
+		dif = obj.Position.X - pos.X
+	end
+	if dif >= 0 then
+		if yLoc > (grid/2) then
+			pix.BackgroundColor3 = Color3.new(m1, m1, m1)
+		else
+			pix.BackgroundColor3 = Color3.new(obj.Color.r*m1, obj.Color.g*m1, obj.Color.b*m1)
+		end
+	else
+		if yLoc < (grid/2) then
+			pix.BackgroundColor3 = Color3.new(m1, m1, m1)
+		else
+			pix.BackgroundColor3 = Color3.new(obj.Color.r*m1, obj.Color.g*m1, obj.Color.b*m1)
+		end
+	end
+end
+
+ServerCommunication.OnClientEvent:Connect(function(pass)
+	if pass == "On" then
+		on = true
+	elseif pass == "Off" then
+		on = false
+	end
+end)
+
+coroutine.wrap(function() --sends the keys used to the server
+	while wait() do
+		if on then
+			local kys = Library.getKeys()
+			ServerCommunication:FireServer(kys) --means the part is server side, possibly not a good idea
+		end
+	end
+end)()
+
+while true do 
+	RunService.Heartbeat:Wait() --60hz wait
+	if #PixelFolder:GetChildren() == 0 and not loading then
+		generatePixels() --gotta have a screen
+	end
+	
+	if on and areWeMoving() then --if not using/moving, why render?
+		if not loading then
+			clear()
+			local uCF = user.CFrame
+			local edge1 = -uCF.LookVector - (uCF.RightVector*fovM)
+			local edge2 = -uCF.LookVector + (uCF.RightVector*fovM)
+			
+			for i=0, (grid-1) do --Lua starts tables at 1, I accidently started at 0 so I had to recover
+				local dir = edge2:Lerp(edge1, ((i+0.5)/grid)) --starts on edge1 and as we travel on the x axis of the SurfaceScreen we get closer to edge2
+				local hit, pos, norm = workspace:FindPartOnRayWithIgnoreList(Ray.new(user.Position, dir*maxDist), {user, user.Face})
+				if hit then
+					local gH = grid/2 --gridHalf
+					local d = (uCF.Position - pos) --vector from raycast position to user position
+					local p = uCF.LookVector:Dot(d.Unit) * d.Magnitude -- angle
+					local m1 = 1 - math.clamp(p/maxDist, 0, 1) --simply the ratio of how far
+					local m2 = math.floor((m1 * grid)/2) --gets the pixels needed to fill, by half
+					local s1 = gH - m2 --where it begins shading the walls
+					if m2 ~= 0 then
+						for j=s1, math.clamp(((gH+m2)-1), (gH+1), (grid-1)) do --renders
+							local pix = pTab[i][j]
+							if pix and m1 < 0.35 then --this creates a maximum render distance for textures
+								local m1 = 1 - math.clamp(p/maxDist, 0.1, 1)
+								pix.BackgroundColor3 = Color3.new(hit.Color.r*m1, hit.Color.g*m1, hit.Color.b*m1)
+							else
+								texture(hit, pos, norm, p, pix, j)
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+end]]></ProtectedString>
+				<int64 name="SourceAssetId">-1</int64>
+				<BinaryString name="Tags"></BinaryString>
+			</Properties>
+		</Item>
+		<Item class="Folder" referent="RBX36EF9286C8AD46D1BC02C1E181DFEED6">
+			<Properties>
+				<BinaryString name="AttributesSerialize"></BinaryString>
+				<string name="Name">Pixels</string>
+				<int64 name="SourceAssetId">-1</int64>
+				<BinaryString name="Tags"></BinaryString>
+			</Properties>
+		</Item>
+	</Item>
+</roblox>

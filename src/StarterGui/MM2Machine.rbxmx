@@ -1,0 +1,169 @@
+<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">
+	<Meta name="ExplicitAutoJoints">true</Meta>
+	<External>null</External>
+	<External>nil</External>
+	<Item class="SurfaceGui" referent="RBXFC66C6A9E3F943E4B2089A93D460B1A6">
+		<Properties>
+			<bool name="Active">true</bool>
+			<Ref name="Adornee">RBX226A936E25C7410CB8F24CF3652B4147</Ref>
+			<bool name="AlwaysOnTop">false</bool>
+			<BinaryString name="AttributesSerialize"></BinaryString>
+			<bool name="AutoLocalize">true</bool>
+			<Vector2 name="CanvasSize">
+				<X>800</X>
+				<Y>800</Y>
+			</Vector2>
+			<bool name="ClipsDescendants">true</bool>
+			<bool name="Enabled">true</bool>
+			<token name="Face">0</token>
+			<float name="LightInfluence">1</float>
+			<string name="Name">MM2Machine</string>
+			<float name="PixelsPerStud">50</float>
+			<bool name="ResetOnSpawn">true</bool>
+			<Ref name="RootLocalizationTable">null</Ref>
+			<token name="SizingMode">0</token>
+			<int64 name="SourceAssetId">-1</int64>
+			<BinaryString name="Tags"></BinaryString>
+			<float name="ToolPunchThroughDistance">0</float>
+			<token name="ZIndexBehavior">1</token>
+			<float name="ZOffset">0</float>
+		</Properties>
+		<Item class="LocalScript" referent="RBX608DC44CC0A64DDB9DD3F30FC2B66347">
+			<Properties>
+				<BinaryString name="AttributesSerialize"></BinaryString>
+				<bool name="Disabled">false</bool>
+				<Content name="LinkedSource"><null></null></Content>
+				<string name="Name">Renderer</string>
+				<string name="ScriptGuid">{96E94938-10FC-4F8F-B559-61716891ACCA}</string>
+				<ProtectedString name="Source"><![CDATA[local RunService = game:GetService("RunService")
+local Library = require(script.Parent.Parent:WaitForChild("Library")) --cuts down on other uses, isn't involved in rendering
+local ServerCommuncation = game.ReplicatedStorage.Remotes.MM2
+
+local SurfaceScreen = script.Parent
+local PixelFolder = SurfaceScreen.Pixels --folder that contains the pixels
+
+local on = false
+local loading = false
+local grid = 40 --40x40 pixels on the screen
+local fovM = 0.3 -- 0.5 is about 90 degree fov
+local pTab = {};
+
+local pixel = Instance.new("TextLabel")
+pixel.Text = ""
+pixel.Size = UDim2.new(0, (800/grid), 0, (800/grid)) --800 is the size of the surfaceGui, I should just reference it
+pixel.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
+pixel.BorderSizePixel = 0
+
+--What we shall use to render, the minimap
+local mach = workspace.MM2Machine
+local minMap = mach.MiniMap
+local user = minMap.User --this is the user
+
+local function generatePixels()
+	loading = true
+	coroutine.wrap(function()
+		for x=0, (grid-1) do
+			pTab[x] = {}
+			coroutine.wrap(function()
+				for y=0, (grid-1) do
+					local p = pixel:Clone()
+					p.Position = UDim2.new(0, x*(800/grid), 0, y*(800/grid))
+					p.Name = "Pixel("..x..","..y..")"
+					p.Parent = PixelFolder
+					pTab[x][y] = p
+					wait()
+				end
+			end)()
+			--wait()
+		end
+		repeat wait() until #PixelFolder:GetChildren() >= (grid*grid)
+		loading = false
+	end)()
+end
+
+local function clear() --creates the "sky box"
+	for i=0, (grid-1) do
+		local gridHalf = grid/2
+		for j=0, (grid-1) do
+			local pix = pTab[i][j]
+			if j > gridHalf then
+				pix.BackgroundColor3 = Color3.fromRGB(150, 100, 100)
+			else
+				pix.BackgroundColor3 = Color3.fromRGB(150, 150, 255)
+			end
+		end
+	end
+end
+
+local function areWeMoving()
+	local kys = Library.getKeys()
+	return kys["w"] or kys["a"] or kys["s"] or kys["d"]
+end
+
+ServerCommuncation.OnClientEvent:Connect(function(pass)
+	if pass == "On" then
+		on = true
+	elseif pass == "Off" then
+		on = false
+	end
+end)
+
+coroutine.wrap(function() --sends the keys used to the server
+	while wait() do
+		if on then
+			local kys = Library.getKeys()
+			ServerCommuncation:FireServer(kys) --means the part is server side, possibly not a good idea
+		end
+	end
+end)()
+
+while true do 
+	RunService.Heartbeat:Wait()--normal wait seems to have a cap :T I think 30 hz. I use runservice for 60 hz
+	if #PixelFolder:GetChildren() == 0 and not loading then
+		generatePixels() --gotta have a screen
+	end
+	
+	if on and areWeMoving() then --if not using/moving, why render?
+		if not loading then
+			clear() --reset the screen
+			local uCF = user.CFrame
+			local edge1 = -uCF.LookVector + (uCF.UpVector*fovM)
+			local edge2 = -uCF.LookVector - (uCF.UpVector*fovM)
+			
+			for i=0, (grid-1) do --its grid -1 because of how its generated
+				local dir = edge2:Lerp(edge1, ((i+0.5)/grid)) --starts on edge1 and as we travel on the x axis of the SurfaceScreen we get closer to edge2
+				local hit, pos = workspace:FindPartOnRayWithIgnoreList(Ray.new(user.Position, dir*5), {user, user.Face})
+				if hit then
+					local gH = grid/2 --gridHalf
+					local d = (uCF.Position - pos) --vector from pos to position
+					local p = uCF.LookVector:Dot(d.Unit) * d.Magnitude -- angle
+					local m1 = 1 - math.clamp(p/5, 0, 1) --simply the ratio of how far
+					local m2 = math.floor((m1 * grid)/2) --gets the pixels needed to fill, by half
+					local s1 = gH - m2 --where it begins shading the walls
+					if m2 ~= 0 then
+						for j=s1, math.clamp(((gH+m2)-1), (gH+1), (grid-1)) do --renders
+							local pix = pTab[i][j]
+							if pix then
+								pix.BackgroundColor3 = Color3.new(hit.Color.r*m1, hit.Color.g*m1, hit.Color.b*m1)
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+end]]></ProtectedString>
+				<int64 name="SourceAssetId">-1</int64>
+				<BinaryString name="Tags"></BinaryString>
+			</Properties>
+		</Item>
+		<Item class="Folder" referent="RBX0D1CF9A3643543528D44B487736CF627">
+			<Properties>
+				<BinaryString name="AttributesSerialize"></BinaryString>
+				<string name="Name">Pixels</string>
+				<int64 name="SourceAssetId">-1</int64>
+				<BinaryString name="Tags"></BinaryString>
+			</Properties>
+		</Item>
+	</Item>
+</roblox>
